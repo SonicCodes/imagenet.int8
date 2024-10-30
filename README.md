@@ -37,69 +37,60 @@ So clearly, it doesn't make sense to download entire Imagenet and process with V
 
 # How do I use this?
 
-First download this. You can use `huggingface-cli` for that. 
+Previously simo's setup used mosaic-streaming and other huggingface stuff, it must be simplified, i do one mmap and one text file! that's it! 
 
+so u just do , 
 ```bash
-# Pro tip : use `hf_transfer` to get faster download speed.
-pip install hf_transfer
-export HF_HUB_ENABLE_HF_TRANSFER=True
-# actual download script. 
-huggingface-cli download --repo-type dataset cloneofsimo/imagenet.int8 --local-dir ./vae_mds
+wget https://internalshare.s3.amazonaws.com/inet.txt
+wget https://internalshare.s3.amazonaws.com/inet.npy
 ```
 
-
-
-Then, you need to install [streaming dataset](https://github.com/mosaicml/streaming) to use this. The dataset is MDS format.
-
-```bash
-pip install mosaicml-streaming
-```
-
-Then, you can very simply use the dataset like this:
-
-(for more info on using Mosaic's StreamingDataset and MDS format, [reference here](https://docs.mosaicml.com/projects/streaming/en/stable/index.html))
-
+then u use this, simple function, u don't need inet.txt file if u don't need it!
 ```python
-from streaming.base.format.mds.encodings import Encoding, _encodings
+
 import numpy as np
-from typing import Any
 import torch
-from streaming import StreamingDataset
+import tqdm
+from torch.utils.data import Dataset, DataLoader
 
-class uint8(Encoding):
-    def encode(self, obj: Any) -> bytes:
-        return obj.tobytes()
+class ImageNetDataset(Dataset):
+    def __init__(self, data_path, labels_path=None):
+        self.data = np.memmap(data_path, dtype='uint8', mode='r', shape=(1_281_152, 4097))
+        if labels_path is not None:
+            with open(labels_path, 'r') as f:
+                self.labels_txt = [(line.strip()) for line in f]
 
-    def decode(self, data: bytes) -> Any:
-        x=  np.frombuffer(data, np.uint8).astype(np.float32)
-        return (x / 255.0 - 0.5) * 24.0
+    def __len__(self):
+        return len(self.data)
 
-_encodings["uint8"] = uint8
+    def __getitem__(self, idx):
+        image = self.data[idx]
+        image, label = image[:-1], image[-1]
+        image = image.astype(np.float32).reshape(4, 32, 32)
+        image = (image / 255.0 - 0.5) * 24.0
+        image = torch.tensor(image, dtype=torch.float32)
+        label = torch.tensor(label, dtype=torch.long)
+        
+        if hasattr(self, 'labels_txt'):
+            return image, label, self.labels_txt[idx]
+        return image, label
 
-remote_train_dir = "./vae_mds" # this is the path you installed this dataset.
-local_train_dir = "./local_train_dir"
+data_path = 'inet.npy'
+labels_path = None#'inet.txt'
+dataset = ImageNetDataset(data_path, labels_path)
+dataloader = DataLoader(dataset, batch_size=128)
 
-train_dataset = StreamingDataset(
-    local=local_train_dir,
-    remote=remote_train_dir,
-    split=None,
-    shuffle=True,
-    shuffle_algo="naive",
-    num_canonical_nodes=1,
-    batch_size = 32
-)
+for images, labels in tqdm.tqdm(dataloader):
+    # print(images.shape, labels.shape)
+    pass
 
-train_dataloader = torch.utils.data.DataLoader(
-    train_dataset,
-    batch_size=32,
-    num_workers=3,
-)
+
 ```
 
-By default, batch will have three attributes: `vae_output`, `label`, `label_as_text`.
 
-Thats the dataloader! Now, below is the example usage. Notice how you have to reshape the data back to `(B, 4, 32, 32)` as they are decoded flattened.
-
+voila, you have onefile imagenet on your hand! 5GB only! you don't need streaming library u can use dataloader samplers and primitives , don't overthink it!
+![speed of mini-inet](contents/image.png) 
+We're iterating at 23k img/second, that's 5x faster than mosaic streaming, and we're not limited by performance artifacts of random sampling from chunked datasets!
 ```python
 ###### Example Usage. Decode back the 5th image. BTW shuffle plz
 from diffusers.models import AutoencoderKL
@@ -108,12 +99,7 @@ from diffusers.image_processor import VaeImageProcessor
 model = "stabilityai/your-stable-diffusion-model"
 vae = AutoencoderKL.from_pretrained("stabilityai/sdxl-vae").to("cuda:0")
 
-batch = next(iter(train_dataloader))
-
-i = 5
-vae_latent = batch["vae_output"].reshape(-1, 4, 32, 32)[i:i+1].cuda().float()
-idx = batch["label"][i]
-text_label = batch['label_as_text'][i]
+vae_latent, idx, text_label = next(iter(dataloader))
 
 print(f"idx: {idx}, text_label: {text_label}, latent: {vae_latent.shape}")
 # idx: 402, text_label: acoustic guitar, latent: torch.Size([1, 4, 32, 32])
@@ -121,7 +107,7 @@ print(f"idx: {idx}, text_label: {text_label}, latent: {vae_latent.shape}")
 # example decoding
 x = vae.decode(vae_latent.cuda()).sample
 img = VaeImageProcessor().postprocess(image = x.detach(), do_denormalize = [True, True])[0]
-img.save("5th_image.png")
+img.save("someimage.png")
 ```
 
 Enjoy!
@@ -139,5 +125,13 @@ If you find this material helpful, consider citation!
   url          = {https://huggingface.co/datasets/cloneofsimo/imagenet.int8},
   note         = {Entire Imagenet dataset compressed to 5GB using VAE and quantized with int8}
 }
-```
 
+@misc{mini_inet_int8,
+  author       = {Rami Seid},
+  title        = {Making imagenet8 even easier},
+  year         = 2024,
+  publisher    = {Hugging Face Datasets},
+  url          = {https://github.com/SonicCodes/imagenet.int8},
+  note         = {Updated version of Simo Ryu's Imagenet.int8 to make it super easy to use}
+}
+```

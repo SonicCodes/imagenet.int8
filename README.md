@@ -41,8 +41,8 @@ Previously simo's setup used mosaic-streaming and other huggingface stuff, it mu
 
 so u just do , 
 ```bash
-wget https://internalshare.s3.amazonaws.com/inet.txt
-wget https://internalshare.s3.amazonaws.com/inet.npy
+wget https://huggingface.co/ramimmo/mini.imgnet.int8/resolve/main/inet.txt
+wget https://huggingface.co/ramimmo/mini.imgnet.int8/resolve/main/inet.npy
 ```
 
 then u use this, simple function, u don't need inet.txt file if u don't need it!

@@ -37,60 +37,55 @@ So clearly, it doesn't make sense to download entire Imagenet and process with V
 
 # How do I use this?
 
-Previously simo's setup used mosaic-streaming and other huggingface stuff, it must be simplified, i do one mmap and one text file! that's it! 
+Previously simo's setup used mosaic-streaming and other huggingface stuff, it must be simplified, i do one mmap and one json file! that's it! 
 
 so u just do , 
 ```bash
-wget https://huggingface.co/ramimmo/mini.imgnet.int8/resolve/main/inet.txt
+wget https://huggingface.co/ramimmo/mini.imgnet.int8/resolve/main/inet.json
 wget https://huggingface.co/ramimmo/mini.imgnet.int8/resolve/main/inet.npy
 ```
 
-then u use this, simple function, u don't need inet.txt file if u don't need it!
+usage is simple too:
 ```python
 
 import numpy as np
 import torch
 import tqdm
+import json
 from torch.utils.data import Dataset, DataLoader
 
 class ImageNetDataset(Dataset):
     def __init__(self, data_path, labels_path=None):
-        self.data = np.memmap(data_path, dtype='uint8', mode='r', shape=(1_281_152, 4097))
-        if labels_path is not None:
-            with open(labels_path, 'r') as f:
-                self.labels_txt = [(line.strip()) for line in f]
+        self.data = np.memmap(data_path, dtype='uint8', mode='r', shape=(1281152, 4096))
+        with open(labels_path, 'r') as f:
+            self.labels = json.load(f)
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         image = self.data[idx]
-        image, label = image[:-1], image[-1]
+        label, label_text = self.labels[idx]
         image = image.astype(np.float32).reshape(4, 32, 32)
         image = (image / 255.0 - 0.5) * 24.0
-        image = torch.tensor(image, dtype=torch.float32)
-        label = torch.tensor(label, dtype=torch.long)
-        
-        if hasattr(self, 'labels_txt'):
-            return image, label, self.labels_txt[idx]
-        return image, label
+        return image, label, label_text
 
 data_path = 'inet.npy'
-labels_path = None#'inet.txt'
+labels_path = 'inet.json'
 dataset = ImageNetDataset(data_path, labels_path)
 dataloader = DataLoader(dataset, batch_size=128)
 
-for images, labels in tqdm.tqdm(dataloader):
-    # print(images.shape, labels.shape)
+for images, labels, ltxt in tqdm.tqdm(dataloader):
     pass
-
 
 ```
 
 
 voila, you have onefile imagenet on your hand! 5GB only! you don't need streaming library u can use dataloader samplers and primitives , don't overthink it!
+
 ![speed of mini-inet](contents/image.png) 
-We're iterating at 23k img/second, that's 5x faster than mosaic streaming, and we're not limited by performance artifacts of random sampling from chunked datasets!
+
+We're iterating at 48k img/second, that's 10x faster than mosaic streaming, and we're not limited by performance artifacts of random sampling from chunked datasets!
 ```python
 ###### Example Usage. Decode back the 5th image. BTW shuffle plz
 from diffusers.models import AutoencoderKL
@@ -128,7 +123,7 @@ If you find this material helpful, consider citation!
 
 @misc{mini_inet_int8,
   author       = {Rami Seid},
-  title        = {Making imagenet8 even easier},
+  title        = {Making imagenet.int8 even easier},
   year         = 2024,
   publisher    = {Hugging Face Datasets},
   url          = {https://github.com/SonicCodes/imagenet.int8},
